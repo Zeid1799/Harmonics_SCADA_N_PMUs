@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Waveform Analysis Suite - Wave Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Global fail-safe error overlay to prevent silent blank screen
+      window.addEventListener('error', function (e) {
+        var errBox = document.getElementById('global-error-overlay');
+        if (!errBox) {
+          errBox = document.createElement('div');
+          errBox.id = 'global-error-overlay';
+          errBox.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#080b11;color:#f43f5e;font-family:monospace;padding:24px;z-index:99999;overflow:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;';
+          var card = document.createElement('div');
+          card.style.cssText = 'max-width:620px;width:100%;background:#0d121f;border:1px solid #e11d48;border-radius:12px;padding:22px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.6);';
+          card.innerHTML = '<h2 style="margin:0 0 8px;font-size:16px;color:#f87171;font-family:monospace;">Application Initialization Error</h2>' +
+            '<p style="margin:0 0 12px;font-size:12px;color:#94a3b8;font-family:sans-serif;">A runtime error occurred during bundle execution:</p>' +
+            '<pre id="err-text" style="background:#05070c;padding:12px;border-radius:6px;font-size:11px;color:#fda4af;white-space:pre-wrap;overflow:auto;max-height:220px;margin:0 0 16px;border:1px solid #1e293b;"></pre>' +
+            '<div style="display:flex;gap:10px;">' +
+            '<button onclick="localStorage.clear();location.reload();" style="background:#06b6d4;color:#05070c;border:none;border-radius:6px;padding:8px 16px;font-weight:bold;cursor:pointer;font-family:monospace;font-size:12px;">Clear Settings &amp; Reload</button>' +
+            '<button onclick="location.reload();" style="background:#1e293b;color:#f1f5f9;border:1px solid #334155;border-radius:6px;padding:8px 16px;cursor:pointer;font-family:monospace;font-size:12px;">Reload Page</button>' +
+            '</div>';
+          errBox.appendChild(card);
+          document.body.appendChild(errBox);
+        }
+        var msg = (e.error && (e.error.stack || e.error.message)) || e.message || 'Unknown runtime error';
+        var pre = document.getElementById('err-text');
+        if (pre) pre.textContent = msg;
+        console.error('Waveform Analysis Suite captured global error:', e);
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var reason = e.reason;
+        var msg = reason ? (reason.stack || reason.message || String(reason)) : 'Unhandled Promise Rejection';
+        window.dispatchEvent(new ErrorEvent('error', { error: reason, message: msg }));
+      });
+    </script>
+  </head>
+  <body class="bg-[#080b11] text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div id="root">
+      <!-- Fallback visual state while React loads and mounts -->
+      <div style="height:100vh;width:100vw;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#080b11;color:#38bdf8;font-family:monospace;gap:16px;">
+        <div style="width:40px;height:40px;border:3px solid #1e293b;border-top-color:#00f0ff;border-radius:50%;animation:suite-spin 0.9s linear infinite;"></div>
+        <div style="font-size:13px;letter-spacing:0.05em;color:#94a3b8;font-weight:500;">Loading Waveform Analysis Suite...</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
