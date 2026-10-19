@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "share": "npx untun@latest tunnel http://localhost:4173",
     "test": "tsx scripts/verify-waveform.ts && tsx scripts/verify-pmu.ts && tsx scripts/verify-waveform-window.ts && tsx scripts/verify-short-circuit.ts && tsx scripts/verify-dynamic-flow.ts && tsx scripts/verify-phase-e-regression.ts && tsx scripts/verify-three-phase.ts && tsx scripts/verify-rlc-circuit.ts && tsx scripts/verify-rlc-transient.ts && tsx scripts/verify-rlc-explicit.ts"
   },
   "dependencies": {
