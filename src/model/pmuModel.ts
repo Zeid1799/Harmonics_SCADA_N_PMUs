@@ -177,6 +177,65 @@ export function calculateAliasFrequency(
   return Math.round(folded * 100) / 100;
 }
 
+/**
+ * Combines multiple PMU spectral components that map to the exact same frequency (e.g. through aliasing)
+ * using physical in-phase and quadrature vector addition:
+ *   I = sum(A_k * cos(phi_k))
+ *   Q = sum(A_k * sin(phi_k))
+ *   A_comb = sqrt(I^2 + Q^2)
+ *   phi_comb = atan2(Q, I)
+ */
+export function combineOverlappingPmuComponents(
+  components: CapturedPmuComponent[]
+): CapturedPmuComponent[] {
+  const groups: { [key: string]: CapturedPmuComponent[] } = {};
+  for (const comp of components) {
+    const key = (Math.round(comp.frequency * 10) / 10).toFixed(1);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(comp);
+  }
+
+  const combined: CapturedPmuComponent[] = [];
+  for (const key of Object.keys(groups)) {
+    const group = groups[key];
+    if (group.length === 1) {
+      combined.push(group[0]);
+    } else {
+      let sumI = 0;
+      let sumQ = 0;
+      for (const c of group) {
+        sumI += c.amplitude * Math.cos(c.phaseShiftRad || 0);
+        sumQ += c.amplitude * Math.sin(c.phaseShiftRad || 0);
+      }
+      const combAmp = Math.sqrt(sumI * sumI + sumQ * sumQ);
+      if (combAmp > 0.0001) {
+        let combPhase = Math.atan2(sumQ, sumI);
+        if (combPhase < 0) combPhase += 2 * Math.PI;
+
+        const first = group[0];
+        const anyAliased = group.some((c) => c.isAliased);
+        const anyAttenuated = group.some((c) => c.isAttenuated);
+        const anyCarrier = group.some((c) => c.isCarrier);
+
+        combined.push({
+          ...first,
+          id: group.map((c) => c.id).join('+'),
+          amplitude: Math.round(combAmp * 1000) / 1000,
+          phaseShiftRad: combPhase,
+          label: group.length > 1
+            ? `${group.map((c) => c.disturbanceId.split('-')[0] || c.label).join('+')} (${combAmp.toFixed(2)}pu)`
+            : first.label,
+          isAliased: anyAliased,
+          isAttenuated: anyAttenuated,
+          isCarrier: anyCarrier,
+        });
+      }
+    }
+  }
+
+  return combined.sort((a, b) => a.frequency - b.frequency);
+}
+
 let nextSnapshotId = 1;
 
 /**
@@ -464,8 +523,8 @@ export function evaluatePmuCapture(
       // Zone 3: Stochastic Capture Model
       // Evaluated as three independent Bernoulli trials:
       // 1. Missed detection (suppresses original)
-      // 2. Aliasing (adds aliased component)
-      // 3. Random attenuation (adds attenuated component at original frequency)
+      // 2. Aliasing (folds frequency to fAlias in Zone 1 or Zone 2)
+      // 3. Random attenuation (applies measurement filter attenuation |H(f)|)
       const probs = settings.probabilities;
       const missed = rng() < probs.pMiss;
       const aliased = rng() < probs.pAlias;
@@ -475,139 +534,129 @@ export function evaluatePmuCapture(
       // Apparent zone of the folded aliased frequency under conventional Nyquist folding
       const aliasZone = determineDisturbanceZone(fAlias, zone1Limit, zone2Limit);
       let attenAmp = 0;
-      let rawFactor = 0;
+      let rawFactor = 1;
       let phaseReversed = false;
 
-      // Trial 2: Aliasing outcome
-      if (aliased) {
-        if (isAdditive) {
-          const fAliasTone = additiveTarget === 'upper'
-            ? Math.round((f0 + fAlias) * 10) / 10
-            : Math.max(0.1, Math.round((f0 - fAlias) * 10) / 10);
-          const signLabel = additiveTarget === 'upper' ? `+${fAlias}` : `-${fAlias}`;
-
-          const compAliasTone: CapturedPmuComponent = {
-            id: `${dist.id}-alias-tone`,
-            disturbanceId: dist.id,
-            frequency: fAliasTone,
-            modulationFrequency: fAlias,
-            amplitude: A,
-            phaseShiftRad: 0,
-            label: `Alias of ${dist.name} (${signLabel}Hz, Z${aliasZone})`,
-            zone: aliasZone,
-            color: distColor,
-            isAliased: true,
-            originalModulationFreq: fm,
-          };
-          outcomeComponents.push(compAliasTone);
-          pmuComponents.push(compAliasTone);
-        } else {
-          const compAliasLower: CapturedPmuComponent = {
-            id: `${dist.id}-alias-lower`,
-            disturbanceId: dist.id,
-            frequency: Math.max(0.1, Math.round((f0 - fAlias) * 10) / 10),
-            modulationFrequency: fAlias,
-            amplitude: A,
-            phaseShiftRad: 0,
-            label: `Alias of ${dist.name} (-${fAlias}Hz, Z${aliasZone})`,
-            zone: aliasZone,
-            color: distColor,
-            isAliased: true,
-            originalModulationFreq: fm,
-          };
-          const compAliasUpper: CapturedPmuComponent = {
-            id: `${dist.id}-alias-upper`,
-            disturbanceId: dist.id,
-            frequency: Math.round((f0 + fAlias) * 10) / 10,
-            modulationFrequency: fAlias,
-            amplitude: A,
-            phaseShiftRad: 0,
-            label: `Alias of ${dist.name} (+${fAlias}Hz, Z${aliasZone})`,
-            zone: aliasZone,
-            color: distColor,
-            isAliased: true,
-            originalModulationFreq: fm,
-          };
-
-          outcomeComponents.push(compAliasLower, compAliasUpper);
-          pmuComponents.push(compAliasLower, compAliasUpper);
-        }
-      }
-
-      // Trial 3: Random Attenuation outcome (at original frequency fm)
+      // 1. Determine effective amplitude & phase after measurement filter response |H(f)|
+      let observedAmp = A;
+      let phaseShiftRad = 0;
       if (attenuated) {
         const atten = calculateZone3Attenuation(A, fm, f0);
         attenAmp = atten.amplitude;
         rawFactor = atten.rawFactor;
         phaseReversed = atten.phaseShiftRad > 0;
+        observedAmp = atten.amplitude;
+        phaseShiftRad = atten.phaseShiftRad;
+      }
 
-        // If missed detection occurred, original component is suppressed
-        // If missed detection did not occur, attenuated component is captured at original frequency
-        if (!missed && atten.amplitude > 0.001) {
+      // 2. Determine frequency & component creation
+      // If missed and not aliased, component is suppressed completely.
+      // If aliased, component folds to fAlias.
+      // If both aliased and attenuated, ONE component is produced at fAlias with attenuated amplitude.
+      if (!missed || aliased) {
+        const isObservedAliased = aliased;
+        const isObservedAttenuated = attenuated;
+        const observedModFreq = isObservedAliased ? fAlias : fm;
+        const observedZone = isObservedAliased ? aliasZone : 3;
+
+        if (observedAmp > 0.001) {
           if (isAdditive) {
             const fTone = additiveTarget === 'upper'
-              ? Math.round((f0 + fm) * 10) / 10
-              : Math.max(0.1, Math.round((f0 - fm) * 10) / 10);
-            const signLabel = additiveTarget === 'upper' ? `+${fm}` : `-${fm}`;
+              ? Math.round((f0 + observedModFreq) * 10) / 10
+              : Math.max(0.1, Math.round((f0 - observedModFreq) * 10) / 10);
+            const signLabel = additiveTarget === 'upper' ? `+${observedModFreq}` : `-${observedModFreq}`;
 
-            const compAttenTone: CapturedPmuComponent = {
-              id: `${dist.id}-atten-tone`,
+            const label = isObservedAliased && isObservedAttenuated
+              ? `Alias & Atten of ${dist.name} (${signLabel}Hz, ${observedAmp.toFixed(2)}pu, Z${observedZone})`
+              : isObservedAliased
+              ? `Alias of ${dist.name} (${signLabel}Hz, Z${observedZone})`
+              : isObservedAttenuated
+              ? `Atten ${dist.name} (${signLabel}Hz, Z3)`
+              : `${dist.name} (${signLabel}Hz, Z3)`;
+
+            const compTone: CapturedPmuComponent = {
+              id: `${dist.id}-observed-tone`,
               disturbanceId: dist.id,
               frequency: fTone,
-              modulationFrequency: fm,
-              amplitude: atten.amplitude,
-              phaseShiftRad: atten.phaseShiftRad,
-              label: `Atten ${dist.name} (${signLabel}Hz, Z3)`,
-              zone: 3,
+              modulationFrequency: observedModFreq,
+              amplitude: observedAmp,
+              phaseShiftRad,
+              label,
+              zone: observedZone,
               color: distColor,
-              isAttenuated: true,
+              isAliased: isObservedAliased,
+              isAttenuated: isObservedAttenuated,
+              originalModulationFreq: fm,
             };
-            outcomeComponents.push(compAttenTone);
-            pmuComponents.push(compAttenTone);
+            outcomeComponents.push(compTone);
+            pmuComponents.push(compTone);
           } else {
-            const compAttenLower: CapturedPmuComponent = {
-              id: `${dist.id}-atten-lower`,
+            const fLower = Math.max(0.1, Math.round((f0 - observedModFreq) * 10) / 10);
+            const fUpper = Math.round((f0 + observedModFreq) * 10) / 10;
+
+            const labelLower = isObservedAliased && isObservedAttenuated
+              ? `Alias & Atten of ${dist.name} (-${observedModFreq}Hz, ${observedAmp.toFixed(2)}pu, Z${observedZone})`
+              : isObservedAliased
+              ? `Alias of ${dist.name} (-${observedModFreq}Hz, Z${observedZone})`
+              : isObservedAttenuated
+              ? `Atten ${dist.name} (-${observedModFreq}Hz, Z3)`
+              : `${dist.name} (-${observedModFreq}Hz, Z3)`;
+
+            const labelUpper = isObservedAliased && isObservedAttenuated
+              ? `Alias & Atten of ${dist.name} (+${observedModFreq}Hz, ${observedAmp.toFixed(2)}pu, Z${observedZone})`
+              : isObservedAliased
+              ? `Alias of ${dist.name} (+${observedModFreq}Hz, Z${observedZone})`
+              : isObservedAttenuated
+              ? `Atten ${dist.name} (+${observedModFreq}Hz, Z3)`
+              : `${dist.name} (+${observedModFreq}Hz, Z3)`;
+
+            const compLower: CapturedPmuComponent = {
+              id: `${dist.id}-observed-lower`,
               disturbanceId: dist.id,
-              frequency: Math.max(0.1, Math.round((f0 - fm) * 10) / 10),
-              modulationFrequency: fm,
-              amplitude: atten.amplitude,
-              phaseShiftRad: atten.phaseShiftRad,
-              label: `Atten ${dist.name} (-${fm}Hz, Z3)`,
-              zone: 3,
+              frequency: fLower,
+              modulationFrequency: observedModFreq,
+              amplitude: observedAmp,
+              phaseShiftRad,
+              label: labelLower,
+              zone: observedZone,
               color: distColor,
-              isAttenuated: true,
+              isAliased: isObservedAliased,
+              isAttenuated: isObservedAttenuated,
+              originalModulationFreq: fm,
             };
-            const compAttenUpper: CapturedPmuComponent = {
-              id: `${dist.id}-atten-upper`,
+            const compUpper: CapturedPmuComponent = {
+              id: `${dist.id}-observed-upper`,
               disturbanceId: dist.id,
-              frequency: Math.round((f0 + fm) * 10) / 10,
-              modulationFrequency: fm,
-              amplitude: atten.amplitude,
-              phaseShiftRad: atten.phaseShiftRad,
-              label: `Atten ${dist.name} (+${fm}Hz, Z3)`,
-              zone: 3,
+              frequency: fUpper,
+              modulationFrequency: observedModFreq,
+              amplitude: observedAmp,
+              phaseShiftRad,
+              label: labelUpper,
+              zone: observedZone,
               color: distColor,
-              isAttenuated: true,
+              isAliased: isObservedAliased,
+              isAttenuated: isObservedAttenuated,
+              originalModulationFreq: fm,
             };
 
-            outcomeComponents.push(compAttenLower, compAttenUpper);
-            pmuComponents.push(compAttenLower, compAttenUpper);
+            outcomeComponents.push(compLower, compUpper);
+            pmuComponents.push(compLower, compUpper);
           }
         }
       }
 
       // Build descriptive outcome status string
       let statusStr = '';
-      if (missed && !aliased && !attenuated) {
+      if (missed && !aliased) {
         statusStr = 'Original Missed (Suppressed)';
-      } else if (!missed && aliased && !attenuated) {
+      } else if (aliased && attenuated) {
+        statusStr = `Aliased (±${fAlias}Hz, Z${aliasZone}) & Attenuated (${observedAmp.toFixed(2)}pu)`;
+      } else if (aliased && !attenuated) {
         statusStr = `Aliased to ±${fAlias}Hz (Z${aliasZone})`;
-      } else if (!missed && !aliased && attenuated) {
-        statusStr = `Attenuated to ${attenAmp.toFixed(2)}pu (Z3)`;
-      } else if (aliased && attenuated && !missed) {
-        statusStr = `Aliased (±${fAlias}Hz, Z${aliasZone}) & Attenuated (${attenAmp.toFixed(2)}pu, Z3)`;
-      } else if (missed && aliased) {
-        statusStr = `Original Missed, Aliased to ±${fAlias}Hz (Z${aliasZone})`;
+      } else if (!aliased && attenuated) {
+        statusStr = `Attenuated to ${observedAmp.toFixed(2)}pu (Z3)`;
+      } else if (!aliased && !attenuated) {
+        statusStr = `Captured unattenuated at ${fm}Hz (Z3)`;
       } else {
         statusStr = 'Out-of-band Filtered';
       }
@@ -631,12 +680,16 @@ export function evaluatePmuCapture(
     }
   }
 
+  // 2.5 Combine any multiple components overlapping at the same observed frequency
+  // via actual physical vector sum (I and Q), handling phase shifts and cancellations
+  const finalPmuComponents = combineOverlappingPmuComponents(pmuComponents);
+
   // 3. Compute Plot Range and Scaling
   let maxAmp = 1.0;
   for (const c of trueComponents) {
     if (c.amplitude > maxAmp) maxAmp = c.amplitude;
   }
-  for (const c of pmuComponents) {
+  for (const c of finalPmuComponents) {
     if (c.amplitude > maxAmp) maxAmp = c.amplitude;
   }
   maxAmp = Math.max(1.5, Math.ceil(maxAmp * 1.25 * 10) / 10);
@@ -648,7 +701,7 @@ export function evaluatePmuCapture(
   const sumTrueSq = trueComponents.reduce((sum, c) => sum + (c.amplitude * c.amplitude) / 2, 0);
   const trueRms = Math.sqrt(sumTrueSq);
 
-  const sumPmuSq = pmuComponents.reduce((sum, c) => sum + (c.amplitude * c.amplitude) / 2, 0);
+  const sumPmuSq = finalPmuComponents.reduce((sum, c) => sum + (c.amplitude * c.amplitude) / 2, 0);
   const pmuRms = Math.sqrt(sumPmuSq);
 
   // Total Vector Error %
@@ -668,7 +721,7 @@ export function evaluatePmuCapture(
     disturbances: [...disturbances],
     outcomes,
     trueComponents,
-    pmuComponents,
+    pmuComponents: finalPmuComponents,
     maxAmplitude: maxAmp,
     minPlotFreq,
     maxPlotFreq,

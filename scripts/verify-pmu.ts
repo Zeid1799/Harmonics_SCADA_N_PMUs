@@ -210,13 +210,27 @@ const rngBoth = () => {
 const snapBoth = evaluatePmuCapture(DEFAULT_WAVEFORM_STATE, distZ3, DEFAULT_PMU_SETTINGS, rngBoth());
 const outcomeBoth = snapBoth.outcomes[0];
 assert(outcomeBoth.aliased === true && outcomeBoth.attenuated === true, 'Scenario C: Simultaneous aliasing and attenuation');
-assert(outcomeBoth.capturedComponents.length === 4, 'Simultaneous events produce 4 components (2 aliased + 2 attenuated original)');
+// AM disturbance produces exactly 1 pair of observed sidebands (2 components), not duplicate 4!
+assert(outcomeBoth.capturedComponents.length === 2, 'Simultaneous events produce exactly 1 pair of observed sidebands (no duplicate peaks)');
+assert(outcomeBoth.capturedComponents.every((c) => c.isAliased && c.isAttenuated), 'Every resulting component is marked as both aliased and attenuated');
+assert(outcomeBoth.capturedComponents.every((c) => c.zone === 2), 'Folded component is observed in Zone 2');
+const expectedAtten23 = calculateZone3Attenuation(0.20, 23, 60).amplitude;
+assert(Math.abs(outcomeBoth.capturedComponents[0].amplitude - expectedAtten23) < 1e-4, 'Observed amplitude reflects attenuated filter response (|H(23Hz)| * 0.20)');
 
-// Ensure all 4 components retain the SAME disturbance color
+// Test additive tone with simultaneous aliasing and attenuation: produces exactly 1 component
+const distZ3Additive: InjectedDisturbance[] = [
+  { id: 'd-z3-add', name: 'Z3 Additive', type: 'additive', modulationFrequency: 23, amplitude: 0.20, enabled: true },
+];
+const snapBothAdd = evaluatePmuCapture(DEFAULT_WAVEFORM_STATE, distZ3Additive, DEFAULT_PMU_SETTINGS, rngBoth());
+const outcomeBothAdd = snapBothAdd.outcomes[0];
+assert(outcomeBothAdd.capturedComponents.length === 1, 'Additive injection that is both aliased and attenuated produces exactly 1 observed spectral component');
+assert(outcomeBothAdd.capturedComponents[0].isAliased && outcomeBothAdd.capturedComponents[0].isAttenuated, 'Additive component is marked as both aliased and attenuated');
+assert(outcomeBothAdd.capturedComponents[0].modulationFrequency === 7, 'Observed frequency agrees with sampling model (23 Hz folds to 7 Hz)');
+assert(Math.abs(outcomeBothAdd.capturedComponents[0].amplitude - expectedAtten23) < 1e-4, 'Observed amplitude agrees with attenuated filter response');
+
+// Ensure components retain disturbance color
 const expectedDistColor = outcomeBoth.capturedComponents[0].color;
-assert(outcomeBoth.capturedComponents.every((c) => c.color === expectedDistColor), 'All resulting components (aliased + attenuated) retain the SAME disturbance color');
-assert(outcomeBoth.capturedComponents.some((c) => c.isAliased && c.zone === 2), 'Aliased component is in Zone 2');
-assert(outcomeBoth.capturedComponents.some((c) => c.isAttenuated && c.zone === 3), 'Attenuated original component remains in Zone 3');
+assert(outcomeBoth.capturedComponents.every((c) => c.color === expectedDistColor), 'All resulting components retain the SAME disturbance color');
 
 // Scenario D: All Three Events (miss=true, alias=true, atten=true)
 const rngAllThree = () => {
@@ -232,6 +246,47 @@ const snapAllThree = evaluatePmuCapture(DEFAULT_WAVEFORM_STATE, distZ3, DEFAULT_
 const outcomeAllThree = snapAllThree.outcomes[0];
 assert(outcomeAllThree.missed === true && outcomeAllThree.aliased === true && outcomeAllThree.attenuated === true, 'Scenario D: All three events occurred');
 assert(outcomeAllThree.capturedComponents.some((c) => c.isAliased), 'Aliased component retained despite missed detection');
+
+// Scenario E: Attenuated but NOT Aliased (miss=false, alias=false, atten=true)
+const rngAttenOnly = () => {
+  let count = 0;
+  return () => {
+    count++;
+    if (count === 1) return 0.9; // miss -> false
+    if (count === 2) return 0.9; // alias -> false
+    return 0.1; // atten -> true
+  };
+};
+const snapAttenOnly = evaluatePmuCapture(DEFAULT_WAVEFORM_STATE, distZ3Additive, DEFAULT_PMU_SETTINGS, rngAttenOnly());
+const outcomeAttenOnly = snapAttenOnly.outcomes[0];
+assert(outcomeAttenOnly.capturedComponents.length === 1, 'Component attenuated but not aliased produces 1 component');
+assert(!outcomeAttenOnly.capturedComponents[0].isAliased && outcomeAttenOnly.capturedComponents[0].isAttenuated, 'Component is marked as attenuated but not aliased');
+assert(outcomeAttenOnly.capturedComponents[0].modulationFrequency === 23, 'Component remains at original modulation frequency (23 Hz, Z3)');
+assert(Math.abs(outcomeAttenOnly.capturedComponents[0].amplitude - expectedAtten23) < 1e-4, 'Component has attenuated amplitude (|H(23Hz)| * 0.20)');
+
+// Scenario F: Multiple components overlapping after aliasing combined via vector sum
+// Disturbance 1: fm = 23 Hz (folds to 7 Hz at 30 fps), A = 0.20 pu
+// Disturbance 2: fm = 37 Hz (folds to 7 Hz at 30 fps), A = 0.20 pu
+const distOverlap: InjectedDisturbance[] = [
+  { id: 'd-ov1', name: 'Overlap 1', type: 'additive', additiveTarget: 'upper', modulationFrequency: 23, amplitude: 0.20, enabled: true },
+  { id: 'd-ov2', name: 'Overlap 2', type: 'additive', additiveTarget: 'upper', modulationFrequency: 37, amplitude: 0.20, enabled: true },
+];
+// Both unattenuated (atten=false), aliased (alias=true)
+const rngAliasNoAtten = () => {
+  let count = 0;
+  return () => {
+    count++;
+    const step = ((count - 1) % 3) + 1;
+    if (step === 1) return 0.9; // miss -> false
+    if (step === 2) return 0.1; // alias -> true
+    return 0.9; // atten -> false
+  };
+};
+const snapOverlap = evaluatePmuCapture(DEFAULT_WAVEFORM_STATE, distOverlap, DEFAULT_PMU_SETTINGS, rngAliasNoAtten());
+// Both alias to 60 + 7 = 67 Hz!
+const comp67 = snapOverlap.pmuComponents.filter((c) => Math.abs(c.frequency - 67) < 0.2);
+assert(comp67.length === 1, 'Overlapping components at 67 Hz are combined into 1 single observed peak');
+assert(Math.abs(comp67[0].amplitude - 0.40) < 1e-3, 'In-phase overlapping components combine constructively to 0.40 pu via vector sum');
 
 // 7. Measurement Snapshot Stability (Lifecycle)
 console.log('\n--- Criterion 9: Snapshot Stability Across Animation Frames ---');

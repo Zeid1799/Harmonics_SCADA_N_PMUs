@@ -130,6 +130,8 @@ export interface RlcTransientMetrics {
 
 export type RlcActiveComponent = 'source' | 'resistor' | 'inductor' | 'capacitor' | null;
 
+export type RlcDisplayMode = 'time' | 'phasor' | 'both';
+
 export interface RlcCircuitState {
   config: RlcCircuitConfig;
   topology: RlcTopologyConfig;
@@ -138,6 +140,7 @@ export interface RlcCircuitState {
   traces: RlcTraceVisibility;
   activeComponent: RlcActiveComponent;
   showPhasors: boolean;
+  displayMode: RlcDisplayMode;
   visibleCycles: number;
 }
 
@@ -185,5 +188,6 @@ export const DEFAULT_RLC_CIRCUIT_STATE: RlcCircuitState = {
   traces: DEFAULT_RLC_TRACES,
   activeComponent: null,
   showPhasors: true,
+  displayMode: 'both',
   visibleCycles: 3,
 };

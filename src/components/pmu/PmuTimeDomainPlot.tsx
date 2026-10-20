@@ -166,6 +166,56 @@ export const PmuTimeDomainPlot: React.FC<PmuTimeDomainPlotProps> = ({
     ctx.lineWidth = 1.2;
     ctx.strokeRect(padding.left, padding.top, plotWidth, plotHeight);
 
+    // 2.5 PMU 2 ms Sliding Measurement Window Overlays (Visible ONLY when paused)
+    const isPaused = !state.playback?.isPlaying;
+    if (isPaused && snapshot.reportingRate > 0) {
+      const frameIntervalSec = 1 / snapshot.reportingRate;
+      const curTime = state.playback?.currentTime ?? 0;
+      const winDurSec = windowDurationMs / 1000;
+      const kMin = Math.floor((curTime - 0.001) / frameIntervalSec);
+      const kMax = Math.ceil((curTime + winDurSec + 0.001) / frameIntervalSec);
+
+      ctx.save();
+      for (let k = kMin; k <= kMax; k++) {
+        const frameSec = k * frameIntervalSec;
+        const tRelMs = (frameSec - curTime) * 1000;
+        const tStartMs = tRelMs - 1.0; // -1 ms
+        const tEndMs = tRelMs + 1.0;   // +1 ms
+
+        if (tEndMs >= 0 && tStartMs <= windowDurationMs) {
+          const xStart = Math.max(padding.left, xToCanvas(tStartMs));
+          const xEnd = Math.min(padding.left + plotWidth, xToCanvas(tEndMs));
+          const w = Math.max(0, xEnd - xStart);
+
+          if (w > 0) {
+            // Lightly shaded semi-transparent measurement window
+            ctx.fillStyle = isDark ? 'rgba(245, 158, 11, 0.16)' : 'rgba(217, 119, 6, 0.14)';
+            ctx.fillRect(xStart, padding.top, w, plotHeight);
+
+            // Subtle vertical window boundary edges
+            ctx.strokeStyle = isDark ? 'rgba(245, 158, 11, 0.40)' : 'rgba(217, 119, 6, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 2]);
+
+            if (tStartMs >= 0) {
+              ctx.beginPath();
+              ctx.moveTo(xStart, padding.top);
+              ctx.lineTo(xStart, padding.top + plotHeight);
+              ctx.stroke();
+            }
+            if (tEndMs <= windowDurationMs) {
+              ctx.beginPath();
+              ctx.moveTo(xEnd, padding.top);
+              ctx.lineTo(xEnd, padding.top + plotHeight);
+              ctx.stroke();
+            }
+            ctx.setLineDash([]);
+          }
+        }
+      }
+      ctx.restore();
+    }
+
     // 3. True Input Waveform Trace (Solid Cyan Line)
     const trueColor = isDark ? '#00f0ff' : '#0284c7';
     ctx.save();
@@ -333,6 +383,10 @@ export const PmuTimeDomainPlot: React.FC<PmuTimeDomainPlotProps> = ({
             <div className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 border border-white inline-block" />
               <span>{snapshot.reportingRate}fps</span>
+            </div>
+            <div className="flex items-center gap-1" title="Sliding 2 ms calculation window (±1 ms around reporting instant, visible when paused)">
+              <span className="w-2.5 h-2 rounded bg-amber-400/25 border border-dashed border-amber-500/60 inline-block" />
+              <span>PMU measurement window (2 ms)</span>
             </div>
           </div>
         </div>

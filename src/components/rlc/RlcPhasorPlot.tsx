@@ -188,7 +188,7 @@ export const RlcPhasorPlot: React.FC<RlcPhasorPlotProps> = ({
         metrics.vSourceRms,
         metrics.vSourcePhaseRad,
         '#38bdf8',
-        `V_s = V_C (${metrics.vSourceRms}V)`,
+        `V_s = V_C (${metrics.vSourceRms.toFixed(metrics.vSourceRms < 10 ? 2 : 1)} V ∠${metrics.vSourcePhaseDeg.toFixed(1)}°)`,
         2.8
       );
       ctx.fillStyle = textDim;
@@ -199,33 +199,33 @@ export const RlcPhasorPlot: React.FC<RlcPhasorPlotProps> = ({
       return;
     }
 
-    // 1. Resistor Voltage Phasor V_R
+    // 1. Resistor Voltage Phasor V_R (when applicable)
     if (metrics.vResistorRms > 0.05) {
       drawPhasor(
         metrics.vResistorRms,
         metrics.vResistorPhaseRad,
         '#10b981',
-        `V_R (${metrics.vResistorRms.toFixed(metrics.vResistorRms < 10 ? 2 : 1)}V)`
+        `V_R (${metrics.vResistorRms.toFixed(metrics.vResistorRms < 10 ? 2 : 1)} V ∠${metrics.vResistorPhaseDeg.toFixed(1)}°)`
       );
     }
 
-    // 2. Inductor Voltage Phasor V_L
+    // 2. Inductor Voltage Phasor V_L (when applicable)
     if (metrics.vInductorRms > 0.05) {
       drawPhasor(
         metrics.vInductorRms,
         metrics.vInductorPhaseRad,
         '#f59e0b',
-        `V_L (${metrics.vInductorRms.toFixed(metrics.vInductorRms < 10 ? 2 : 1)}V)`
+        `V_L (${metrics.vInductorRms.toFixed(metrics.vInductorRms < 10 ? 2 : 1)} V ∠${metrics.vInductorPhaseDeg.toFixed(1)}°)`
       );
     }
 
-    // 3. Capacitor Voltage Phasor V_C
+    // 3. Capacitor Voltage Phasor V_C (when applicable)
     if (metrics.vCapacitorRms > 0.05) {
       drawPhasor(
         metrics.vCapacitorRms,
         metrics.vCapacitorPhaseRad,
         '#a855f7',
-        `V_C (${metrics.vCapacitorRms.toFixed(metrics.vCapacitorRms < 10 ? 2 : 1)}V)`
+        `V_C (${metrics.vCapacitorRms.toFixed(metrics.vCapacitorRms < 10 ? 2 : 1)} V ∠${metrics.vCapacitorPhaseDeg.toFixed(1)}°)`
       );
     }
 
@@ -234,11 +234,11 @@ export const RlcPhasorPlot: React.FC<RlcPhasorPlotProps> = ({
       metrics.vSourceRms,
       metrics.vSourcePhaseRad,
       '#38bdf8',
-      `V_s (${metrics.vSourceRms.toFixed(metrics.vSourceRms < 10 ? 2 : 1)}V)`,
+      `V_s (${metrics.vSourceRms.toFixed(metrics.vSourceRms < 10 ? 2 : 1)} V ∠${metrics.vSourcePhaseDeg.toFixed(1)}°)`,
       2.8
     );
 
-    // 5. Current Phasor I
+    // 5. Current Phasor I (cyan dashed, normalized scale)
     if (metrics.iRms > 0.001) {
       const currentAngleRad = metrics.phiIRad;
       const currentLength = radius * 0.75;
@@ -277,7 +277,11 @@ export const RlcPhasorPlot: React.FC<RlcPhasorPlotProps> = ({
       ctx.font = '9.5px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`I (${metrics.iRms.toFixed(2)}A)`, iTextX, iTextY);
+      ctx.fillText(
+        `I (${metrics.iRms.toFixed(metrics.iRms < 10 ? 2 : 1)} A ∠${metrics.phiIDeg.toFixed(1)}°)`,
+        iTextX,
+        iTextY
+      );
 
       // Draw angle arc
       if (Math.abs(metrics.phiIDeg) > 2) {
@@ -315,21 +319,33 @@ export const RlcPhasorPlot: React.FC<RlcPhasorPlotProps> = ({
       ref={containerRef}
       className="relative w-full h-full flex flex-col justify-between overflow-hidden select-none"
     >
+      {/* Top Header: Title and KVL Verification */}
       <div className="shrink-0 flex items-center justify-between px-3 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-[#080c14]/80 backdrop-blur-sm z-10 text-[11px] font-mono">
         <span className="font-bold text-slate-700 dark:text-slate-300">
-          Phasor View
+          Phasor View (RMS Phasors)
         </span>
-        <span className="text-[10px] text-slate-500">
-          {metrics.isUnboundedCurrent
-            ? 'Current: Unbounded'
-            : metrics.isOpenCircuit
-            ? 'Open Circuit (I = 0)'
-            : `Error: ${metrics.phasorSumError.toFixed(3)} V`}
+        <span className="text-[10px] text-slate-500 flex items-center gap-1.5">
+          {metrics.isUnboundedCurrent ? (
+            <span className="text-rose-500 font-semibold">Current: Unbounded (|Z| = 0 Ω)</span>
+          ) : metrics.isOpenCircuit ? (
+            <span className="text-amber-500">Open Circuit (I = 0 A, V_C = V_s)</span>
+          ) : (
+            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+              KVL: V_R + V_L + V_C = V_s (Δ = {metrics.phasorSumError < 1e-4 ? '0.00' : metrics.phasorSumError.toFixed(2)} V)
+            </span>
+          )}
         </span>
       </div>
 
+      {/* Main Canvas Area */}
       <div className="flex-1 w-full h-full min-h-0">
         <canvas ref={canvasRef} className="w-full h-full block" />
+      </div>
+
+      {/* Bottom Subtitle / Scale Convention Note */}
+      <div className="shrink-0 px-2 py-0.5 border-t border-slate-200/80 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40 text-[9.5px] font-mono text-slate-400 dark:text-slate-500 flex items-center justify-between">
+        <span>Voltages: Solid lines (V RMS, scaled to V_max)</span>
+        <span>Current: Dashed cyan (A RMS, normalized)</span>
       </div>
     </div>
   );

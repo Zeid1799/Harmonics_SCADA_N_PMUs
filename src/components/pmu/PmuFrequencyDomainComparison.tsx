@@ -268,11 +268,22 @@ export const PmuFrequencyDomainComparison: React.FC<PmuFrequencyDomainComparison
         ctx.closePath();
         ctx.fill();
 
+        // If also attenuated, add an inner circular cutout to show both effects
+        if (comp.isAttenuated) {
+          ctx.beginPath();
+          ctx.fillStyle = isDark ? '#080c14' : '#ffffff';
+          ctx.arc(x, topY, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
         // Label above
         ctx.fillStyle = stemColor;
         ctx.font = 'bold 8px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(`Alias (${comp.amplitude.toFixed(2)})`, x, topY - 6);
+        const labelText = comp.isAttenuated
+          ? `Alias & Atten (${comp.amplitude.toFixed(2)})`
+          : `Alias (${comp.amplitude.toFixed(2)})`;
+        ctx.fillText(labelText, x, topY - 6);
       } else if (comp.isAttenuated) {
         // Attenuated component: Solid stem in disturbance color + Ring marker
         ctx.strokeStyle = stemColor;

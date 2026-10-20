@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { WaveGenerator } from './components/WaveGenerator';
+import { WaveGenerator, WaveGeneratorOperatingMode } from './components/WaveGenerator';
 import { ScadaView } from './components/scada/ScadaView';
 import { PmuView } from './components/pmu/PmuView';
 import { NetworkView } from './components/network/NetworkView';
 import { SettingsDropdown } from './components/SettingsDropdown';
 import { LayoutSelector } from './components/LayoutSelector';
+import { RlcDisplaySelector } from './components/rlc/RlcDisplaySelector';
+import { RlcDisplayMode } from './types/rlcCircuit';
 import { AppSettings, AppViewMode, DEFAULT_SETTINGS, WorkspaceLayout } from './types/settings';
 import { WaveformState } from './types/waveform';
 import {
@@ -54,6 +56,8 @@ type AppTab = 'generator' | 'scada' | 'pmu';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>('generator');
+  const [generatorOperatingMode, setGeneratorOperatingMode] = useState<WaveGeneratorOperatingMode>('single');
+  const [circuitDisplayMode, setCircuitDisplayMode] = useState<RlcDisplayMode>('both');
 
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
@@ -447,10 +451,17 @@ export const App: React.FC = () => {
           {/* Center: Layout Selector (when in Waveform View) or IEEE 30-Bus Status Pill */}
           <div className="hidden md:flex items-center justify-center">
             {settings.viewMode === 'waveform' ? (
-              <LayoutSelector
-                layout={settings.layout}
-                onLayoutChange={handleLayoutChange}
-              />
+              activeTab === 'generator' && generatorOperatingMode === 'circuit' ? (
+                <RlcDisplaySelector
+                  mode={circuitDisplayMode}
+                  onModeChange={setCircuitDisplayMode}
+                />
+              ) : (
+                <LayoutSelector
+                  layout={settings.layout}
+                  onLayoutChange={handleLayoutChange}
+                />
+              )
             ) : (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-300">
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -557,6 +568,10 @@ export const App: React.FC = () => {
                 onResetTime={resetTime}
                 showHarmonicsBreakdown={showHarmonicsBreakdown}
                 onToggleBreakdown={() => setShowHarmonicsBreakdown((prev) => !prev)}
+                operatingMode={generatorOperatingMode}
+                onOperatingModeChange={setGeneratorOperatingMode}
+                rlcDisplayMode={circuitDisplayMode}
+                onRlcDisplayModeChange={setCircuitDisplayMode}
               />
             )}
             {activeTab === 'scada' && (

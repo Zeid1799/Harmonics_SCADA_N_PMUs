@@ -8,6 +8,7 @@ import {
 import {
   RlcCircuitState,
   RlcSimulationMode,
+  RlcDisplayMode,
   DEFAULT_RLC_CIRCUIT_STATE,
 } from '../types/rlcCircuit';
 import {
@@ -33,13 +34,14 @@ import { RlcControls } from './rlc/RlcControls';
 import { RlcWaveformPlot } from './rlc/RlcWaveformPlot';
 import { RlcPhasorPlot } from './rlc/RlcPhasorPlot';
 import { RlcResultsPanel } from './rlc/RlcResultsPanel';
+import { RlcDisplaySelector } from './rlc/RlcDisplaySelector';
 import { Activity, Radio, Compass, Cpu } from 'lucide-react';
 
 /**
  * Feature flag for Transient simulation mode in Circuit View.
- * Enabled per user specification to support switchable Steady State / Transient simulation.
+ * Temporarily disabled per user specification. Preserved in codebase for future work.
  */
-const ENABLE_TRANSIENT_MODE: boolean = true;
+const ENABLE_TRANSIENT_MODE: boolean = false;
 
 export type WaveGeneratorOperatingMode = 'single' | 'circuit' | 'three';
 
@@ -55,6 +57,10 @@ interface WaveGeneratorProps {
   onResetTime?: () => void;
   showHarmonicsBreakdown?: boolean;
   onToggleBreakdown?: () => void;
+  operatingMode?: WaveGeneratorOperatingMode;
+  onOperatingModeChange?: (mode: WaveGeneratorOperatingMode) => void;
+  rlcDisplayMode?: RlcDisplayMode;
+  onRlcDisplayModeChange?: (mode: RlcDisplayMode) => void;
 }
 
 export const WaveGenerator: React.FC<WaveGeneratorProps> = ({
@@ -69,12 +75,32 @@ export const WaveGenerator: React.FC<WaveGeneratorProps> = ({
   onResetTime: externalResetTime,
   showHarmonicsBreakdown: externalShowBreakdown,
   onToggleBreakdown: externalOnToggleBreakdown,
+  operatingMode: externalOperatingMode,
+  onOperatingModeChange: externalOnOperatingModeChange,
+  rlcDisplayMode: externalRlcDisplayMode,
+  onRlcDisplayModeChange: externalOnRlcDisplayModeChange,
 }) => {
   // 1. Operating Mode Selector: Single Phase | Circuit View | Three Phase
-  const [phaseMode, setPhaseMode] = useState<WaveGeneratorOperatingMode>('single');
+  const [internalPhaseMode, setInternalPhaseMode] = useState<WaveGeneratorOperatingMode>('single');
+  const phaseMode = externalOperatingMode ?? internalPhaseMode;
+  const setPhaseMode = useCallback((mode: WaveGeneratorOperatingMode) => {
+    if (externalOnOperatingModeChange) {
+      externalOnOperatingModeChange(mode);
+    }
+    setInternalPhaseMode(mode);
+  }, [externalOnOperatingModeChange]);
 
   // RLC Circuit State (independent of single-phase and three-phase state)
   const [rlcState, setRlcState] = useState<RlcCircuitState>(DEFAULT_RLC_CIRCUIT_STATE);
+
+  // Synchronized RLC Display Mode ('time' | 'phasor' | 'both')
+  const currentRlcDisplayMode = externalRlcDisplayMode ?? rlcState.displayMode;
+  const handleRlcDisplayModeChange = useCallback((mode: RlcDisplayMode) => {
+    if (externalOnRlcDisplayModeChange) {
+      externalOnRlcDisplayModeChange(mode);
+    }
+    setRlcState((prev) => ({ ...prev, displayMode: mode }));
+  }, [externalOnRlcDisplayModeChange]);
 
   // Three-Phase State (independent of single-phase state)
   const [threePhaseState, setThreePhaseState] = useState<ThreePhaseState>(DEFAULT_THREE_PHASE_STATE);
@@ -399,22 +425,13 @@ export const WaveGenerator: React.FC<WaveGeneratorProps> = ({
           </button>
         </div>
 
-        {/* Phasor Toggle Button (for Circuit View or Three Phase) */}
+        {/* Circuit View Display Options Selector: Time Domain | Phasor View | Both */}
         {phaseMode === 'circuit' && (
           <div className="flex items-center gap-2">
-            <button
-              onClick={() =>
-                setRlcState((prev) => ({ ...prev, showPhasors: !prev.showPhasors }))
-              }
-              className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors ${
-                rlcState.showPhasors
-                  ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 border-cyan-500/30 font-semibold'
-                  : 'bg-slate-100 dark:bg-slate-900 text-slate-500 border-slate-200 dark:border-slate-800'
-              }`}
-            >
-              <Compass className="w-3 h-3" />
-              <span>Phasors {rlcState.showPhasors ? 'On' : 'Off'}</span>
-            </button>
+            <RlcDisplaySelector
+              mode={currentRlcDisplayMode}
+              onModeChange={handleRlcDisplayModeChange}
+            />
           </div>
         )}
 
@@ -639,30 +656,40 @@ export const WaveGenerator: React.FC<WaveGeneratorProps> = ({
                 />
               </div>
 
-              {/* Time-Domain Waveforms & Phasor Plot Card */}
+              {/* Circuit View Results Visualization Area: Time Domain, Phasor View, or Both */}
               <div className="flex-1 min-h-0 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#080c14] shadow-md overflow-hidden flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800">
-                <div className="flex-1 h-full min-w-0 min-h-0">
-                  <RlcWaveformPlot
-                    config={rlcState.config}
-                    topology={rlcState.topology}
-                    metrics={rlcMetrics}
-                    traces={rlcState.traces}
-                    onToggleTrace={(key) =>
-                      setRlcState((prev) => ({
-                        ...prev,
-                        traces: { ...prev.traces, [key]: !prev.traces[key] },
-                      }))
-                    }
-                    theme={theme}
-                    currentTimeSec={playback.currentTime}
-                    visibleCycles={rlcState.visibleCycles}
-                    simulationMode={effectiveSimulationMode}
-                    transientState={rlcState.transient}
-                  />
-                </div>
+                {/* 1. Time-Domain Waveforms Plot (shown in 'time' and 'both') */}
+                {(currentRlcDisplayMode === 'both' || currentRlcDisplayMode === 'time') && (
+                  <div className="flex-1 h-full min-w-0 min-h-0">
+                    <RlcWaveformPlot
+                      config={rlcState.config}
+                      topology={rlcState.topology}
+                      metrics={rlcMetrics}
+                      traces={rlcState.traces}
+                      onToggleTrace={(key) =>
+                        setRlcState((prev) => ({
+                          ...prev,
+                          traces: { ...prev.traces, [key]: !prev.traces[key] },
+                        }))
+                      }
+                      theme={theme}
+                      currentTimeSec={playback.currentTime}
+                      visibleCycles={rlcState.visibleCycles}
+                      simulationMode={effectiveSimulationMode}
+                      transientState={rlcState.transient}
+                    />
+                  </div>
+                )}
 
-                {rlcState.showPhasors && effectiveSimulationMode === 'steady' && (
-                  <div className="w-full sm:w-60 lg:w-72 h-52 sm:h-full shrink-0 min-w-0">
+                {/* 2. Complex Phasor Diagram (shown in 'phasor' and 'both') */}
+                {(currentRlcDisplayMode === 'both' || currentRlcDisplayMode === 'phasor') && (
+                  <div
+                    className={
+                      currentRlcDisplayMode === 'phasor'
+                        ? 'flex-1 h-full min-w-0 min-h-0'
+                        : 'w-full sm:w-72 lg:w-80 h-60 sm:h-full shrink-0 min-w-0'
+                    }
+                  >
                     <RlcPhasorPlot config={rlcState.config} metrics={rlcMetrics} theme={theme} />
                   </div>
                 )}

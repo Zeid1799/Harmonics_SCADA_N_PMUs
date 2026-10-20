@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { WaveformState, HarmonicPercentages } from '../../types/waveform';
-import { formatWaveformEquation, DEFAULT_WAVEFORM_STATE } from '../../model/waveformModel';
+import { InjectedDisturbance } from '../../types/pmu';
+import {
+  formatPmuCompositeEquation,
+  DEFAULT_WAVEFORM_STATE,
+} from '../../model/waveformModel';
 import {
   parseWaveformEquation,
   replacePiWithSymbol,
@@ -18,6 +22,7 @@ import {
   Gauge,
   Sparkles,
   GripHorizontal,
+  Zap,
 } from 'lucide-react';
 
 interface PmuWaveformControlsModalProps {
@@ -25,6 +30,7 @@ interface PmuWaveformControlsModalProps {
   onClose: () => void;
   waveformState: WaveformState;
   onUpdateWaveform: (updater: (prev: WaveformState) => WaveformState) => void;
+  disturbances?: InjectedDisturbance[];
 }
 
 export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> = ({
@@ -32,8 +38,12 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
   onClose,
   waveformState,
   onUpdateWaveform,
+  disturbances = [],
 }) => {
-  const [eqInputValue, setEqInputValue] = useState<string>(waveformState.equation);
+  const [hasManualOverride, setHasManualOverride] = useState<boolean>(false);
+  const [eqInputValue, setEqInputValue] = useState<string>(() =>
+    formatPmuCompositeEquation(waveformState, disturbances)
+  );
   const [isFocused, setIsFocused] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -66,13 +76,26 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
     }
   }, [isOpen]);
 
-  // Sync input value with equation when state changes from sliders
+  // Sync input value with equation when state changes from sliders or disturbances
   useEffect(() => {
-    if (!isFocused) {
-      setEqInputValue(waveformState.equation);
+    if (!hasManualOverride && !isFocused) {
+      const composite = formatPmuCompositeEquation(waveformState, disturbances);
+      setEqInputValue(composite);
       setValidationError(null);
     }
-  }, [waveformState.equation, isFocused]);
+  }, [
+    waveformState.fundamentalFrequency,
+    waveformState.fundamentalAmplitude,
+    waveformState.harmonics?.second,
+    waveformState.harmonics?.third,
+    waveformState.harmonics?.fourth,
+    waveformState.dcOffset,
+    waveformState.phase,
+    waveformState.customTerms,
+    disturbances,
+    hasManualOverride,
+    isFocused,
+  ]);
 
   // Close on Escape key
   useEffect(() => {
@@ -172,17 +195,15 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
   // --- Parameter Handlers ---
   const handleFrequencyChange = (freq: number) => {
     onUpdateWaveform((prev) => {
-      const eq = formatWaveformEquation(
-        freq,
-        prev.fundamentalAmplitude,
-        prev.harmonics,
-        prev.customTerms,
-        prev.dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         fundamentalFrequency: freq,
+      };
+      const eq = hasManualOverride
+        ? prev.equation
+        : formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -190,17 +211,15 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
 
   const handleAmplitudeChange = (amp: number) => {
     onUpdateWaveform((prev) => {
-      const eq = formatWaveformEquation(
-        prev.fundamentalFrequency,
-        amp,
-        prev.harmonics,
-        prev.customTerms,
-        prev.dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         fundamentalAmplitude: amp,
+      };
+      const eq = hasManualOverride
+        ? prev.equation
+        : formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -208,17 +227,15 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
 
   const handlePhaseChange = (phase: number) => {
     onUpdateWaveform((prev) => {
-      const eq = formatWaveformEquation(
-        prev.fundamentalFrequency,
-        prev.fundamentalAmplitude,
-        prev.harmonics,
-        prev.customTerms,
-        prev.dcOffset,
-        phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         phase,
+      };
+      const eq = hasManualOverride
+        ? prev.equation
+        : formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -226,17 +243,15 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
 
   const handleDcOffsetChange = (dcOffset: number) => {
     onUpdateWaveform((prev) => {
-      const eq = formatWaveformEquation(
-        prev.fundamentalFrequency,
-        prev.fundamentalAmplitude,
-        prev.harmonics,
-        prev.customTerms,
-        dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         dcOffset,
+      };
+      const eq = hasManualOverride
+        ? prev.equation
+        : formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -249,17 +264,15 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
         ...baseHarmonics,
         [key]: val,
       };
-      const eq = formatWaveformEquation(
-        prev.fundamentalFrequency,
-        prev.fundamentalAmplitude,
-        nextHarmonics,
-        prev.customTerms,
-        prev.dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         harmonics: nextHarmonics,
+      };
+      const eq = hasManualOverride
+        ? prev.equation
+        : formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -304,6 +317,7 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
   };
 
   const handleEqInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setHasManualOverride(true);
     const input = e.target;
     const rawVal = input.value;
     const cursorPos = input.selectionStart ?? rawVal.length;
@@ -323,6 +337,7 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
   };
 
   const handleInsertPi = (e: React.MouseEvent) => {
+    setHasManualOverride(true);
     e.preventDefault();
     const input = inputRef.current;
     if (!input) return;
@@ -348,8 +363,21 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
   };
 
   const handleResetToDefaults = () => {
+    setHasManualOverride(false);
     onUpdateWaveform(() => ({
       ...DEFAULT_WAVEFORM_STATE,
+      equation: formatPmuCompositeEquation(DEFAULT_WAVEFORM_STATE, disturbances),
+    }));
+  };
+
+  const handleRestoreComputedEquation = () => {
+    setHasManualOverride(false);
+    const composite = formatPmuCompositeEquation(waveformState, disturbances);
+    setEqInputValue(composite);
+    setValidationError(null);
+    onUpdateWaveform((prev) => ({
+      ...prev,
+      equation: composite,
     }));
   };
 
@@ -418,7 +446,26 @@ export const PmuWaveformControlsModal: React.FC<PmuWaveformControlsModalProps> =
               </label>
 
               <div className="flex items-center gap-2">
-                {validationError ? (
+                {disturbances.filter((d) => d.enabled && d.amplitude > 0).length > 0 && (
+                  <span
+                    title="Active disturbance injections are included in the generated equation"
+                    className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/40 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-800/40 font-semibold"
+                  >
+                    <Zap className="w-3 h-3 text-amber-500 fill-current" />
+                    Injections Included ({disturbances.filter((d) => d.enabled && d.amplitude > 0).length})
+                  </span>
+                )}
+
+                {hasManualOverride ? (
+                  <button
+                    onClick={handleRestoreComputedEquation}
+                    title="Re-synchronize equation with fundamental and active injected disturbances"
+                    className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 transition-colors"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    Re-sync Injections
+                  </button>
+                ) : validationError ? (
                   <span className="flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-800/50">
                     <AlertCircle className="w-3 h-3 text-amber-500" />
                     {validationError}

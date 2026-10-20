@@ -1,4 +1,5 @@
 import { WaveformState, HarmonicPercentages, CustomTerm, WaveTelemetry } from '../types/waveform';
+import { InjectedDisturbance } from '../types/pmu';
 
 export const DEFAULT_WAVEFORM_STATE: WaveformState = {
   fundamentalFrequency: 60,
@@ -87,6 +88,100 @@ export function formatWaveformEquation(
   }
 
   return `x(t) = ${parts.join(' + ').replace(/\+\s*\-\s*/g, '- ')}`;
+}
+
+/**
+ * Format the true electrical signal equation on the PMU tab including fundamental,
+ * harmonics, custom terms, active injected disturbance sinusoids, and DC offset.
+ * Example: v(t) = 1.00 sin(2π·60t) + 0.30 sin(2π·70t)
+ */
+export function formatPmuCompositeEquation(
+  state: WaveformState,
+  disturbances: InjectedDisturbance[] = []
+): string {
+  const parts: string[] = [];
+
+  const roundNum = (n: number, decimals: number = 2): string => {
+    return n.toFixed(decimals);
+  };
+
+  const f0 = Math.round((state.fundamentalFrequency || 60) * 100) / 100;
+  const a1 = state.fundamentalAmplitude;
+  const phaseDeg = state.phase || 0;
+
+  // 1. Fundamental term
+  if (
+    a1 !== 0 ||
+    (!state.harmonics && (!state.customTerms || state.customTerms.length === 0) && disturbances.length === 0)
+  ) {
+    const fStr = f0 === Math.floor(f0) ? f0.toString() : f0.toFixed(1);
+    const phaseStr = phaseDeg !== 0 ? ` + ${(phaseDeg > 0 ? '+' : '')}${phaseDeg}°` : '';
+    parts.push(`${roundNum(a1)} sin(2π·${fStr}t${phaseStr})`);
+  }
+
+  // 2. Harmonics
+  const harmonics = state.harmonics || { second: 0, third: 0, fourth: 0 };
+  const harmonicSpecs: Array<{ mult: number; pct: number }> = [
+    { mult: 2, pct: harmonics.second },
+    { mult: 3, pct: harmonics.third },
+    { mult: 4, pct: harmonics.fourth },
+  ];
+  for (const { mult, pct } of harmonicSpecs) {
+    if (pct > 0 && a1 > 0) {
+      const harmAmp = a1 * (pct / 100);
+      const harmFreq = Math.round(f0 * mult * 100) / 100;
+      const fStr = harmFreq === Math.floor(harmFreq) ? harmFreq.toString() : harmFreq.toFixed(1);
+      parts.push(`${roundNum(harmAmp)} sin(2π·${fStr}t)`);
+    }
+  }
+
+  // 3. Custom terms from previous equation edits
+  for (const term of state.customTerms || []) {
+    if (Math.abs(term.amplitude) < 0.0001) continue;
+    const termFreq = Math.round(term.frequency * 100) / 100;
+    const fStr = termFreq === Math.floor(termFreq) ? termFreq.toString() : termFreq.toFixed(1);
+    const termPhaseDeg = Math.round(((term.phaseRad || 0) * 180) / Math.PI);
+    const phaseStr = termPhaseDeg !== 0 ? ` + ${(termPhaseDeg > 0 ? '+' : '')}${termPhaseDeg}°` : '';
+    parts.push(`${roundNum(term.amplitude)} sin(2π·${fStr}t${phaseStr})`);
+  }
+
+  // 4. Active Injected Disturbances
+  const activeDist = disturbances.filter((d) => d.enabled && d.amplitude > 0);
+  for (const dist of activeDist) {
+    const fm = dist.modulationFrequency;
+    const amp = dist.amplitude;
+    const isAdditive = dist.type === 'additive';
+    const additiveTarget = dist.additiveTarget || 'lower';
+    const phaseStr = phaseDeg !== 0 ? ` + ${(phaseDeg > 0 ? '+' : '')}${phaseDeg}°` : '';
+
+    if (isAdditive) {
+      const fTone = additiveTarget === 'upper'
+        ? Math.round((f0 + fm) * 10) / 10
+        : Math.max(0.1, Math.round((f0 - fm) * 10) / 10);
+      const fStr = fTone === Math.floor(fTone) ? fTone.toString() : fTone.toFixed(1);
+      parts.push(`${roundNum(amp)} sin(2π·${fStr}t${phaseStr})`);
+    } else {
+      // AM produces lower and upper sidebands
+      const fLower = Math.max(0.1, Math.round((f0 - fm) * 10) / 10);
+      const fUpper = Math.round((f0 + fm) * 10) / 10;
+      const flStr = fLower === Math.floor(fLower) ? fLower.toString() : fLower.toFixed(1);
+      const fuStr = fUpper === Math.floor(fUpper) ? fUpper.toString() : fUpper.toFixed(1);
+      parts.push(`${roundNum(amp)} sin(2π·${flStr}t${phaseStr})`);
+      parts.push(`${roundNum(amp)} sin(2π·${fuStr}t${phaseStr})`);
+    }
+  }
+
+  // 5. DC offset
+  if (Math.abs(state.dcOffset || 0) > 0.001) {
+    const sign = (state.dcOffset || 0) > 0 ? '+' : '-';
+    parts.push(`${sign} ${roundNum(Math.abs(state.dcOffset || 0))}`);
+  }
+
+  if (parts.length === 0) {
+    return 'v(t) = 0';
+  }
+
+  return `v(t) = ${parts.join(' + ').replace(/\+\s*\-\s*/g, '- ')}`;
 }
 
 /**

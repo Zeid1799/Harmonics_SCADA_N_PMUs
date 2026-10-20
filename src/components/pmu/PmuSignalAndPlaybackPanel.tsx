@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { WaveformState, PlaybackState, HarmonicPercentages } from '../../types/waveform';
 import { InjectedDisturbance, PmuMeasurementSnapshot } from '../../types/pmu';
 import { AppTheme } from '../../types/settings';
-import { formatWaveformEquation } from '../../model/waveformModel';
+import { formatPmuCompositeEquation } from '../../model/waveformModel';
 import { PmuWaveformControlsModal } from './PmuWaveformControlsModal';
 import { WhatIsAPhasorModal } from './WhatIsAPhasorModal';
 import {
@@ -46,17 +46,13 @@ export const PmuSignalAndPlaybackPanel: React.FC<PmuSignalAndPlaybackPanelProps>
 
   const handleAmplitudeChange = (amp: number) => {
     onUpdateWaveform((prev) => {
-      const eq = formatWaveformEquation(
-        prev.fundamentalFrequency,
-        amp,
-        prev.harmonics,
-        prev.customTerms,
-        prev.dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         fundamentalAmplitude: amp,
+      };
+      const eq = formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -76,18 +72,14 @@ export const PmuSignalAndPlaybackPanel: React.FC<PmuSignalAndPlaybackPanelProps>
         return term;
       });
 
-      const eq = formatWaveformEquation(
-        freq,
-        prev.fundamentalAmplitude,
-        prev.harmonics,
-        updatedCustom,
-        prev.dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         fundamentalFrequency: freq,
         customTerms: updatedCustom,
+      };
+      const eq = formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -100,17 +92,13 @@ export const PmuSignalAndPlaybackPanel: React.FC<PmuSignalAndPlaybackPanelProps>
         third,
         fourth,
       };
-      const eq = formatWaveformEquation(
-        prev.fundamentalFrequency,
-        prev.fundamentalAmplitude,
-        newHarmonics,
-        prev.customTerms,
-        prev.dcOffset,
-        prev.phase
-      );
-      return {
+      const nextState: WaveformState = {
         ...prev,
         harmonics: newHarmonics,
+      };
+      const eq = formatPmuCompositeEquation(nextState, disturbances);
+      return {
+        ...nextState,
         equation: eq,
       };
     });
@@ -310,6 +298,7 @@ export const PmuSignalAndPlaybackPanel: React.FC<PmuSignalAndPlaybackPanelProps>
         onClose={() => setIsEditModalOpen(false)}
         waveformState={waveformState}
         onUpdateWaveform={onUpdateWaveform}
+        disturbances={disturbances}
       />
 
       {/* Movable "What is a Phasor?" Modal */}
